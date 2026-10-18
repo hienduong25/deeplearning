@@ -1,0 +1,136 @@
+name: 3_DocShadowNetV2_fp_freqavg_budget_30000
+model_type: ImageCleanModel
+scale: 1
+num_gpu: 1
+manual_seed: 100
+datasets:
+  train:
+    name: RDD_Train
+    type: Dataset_PairedImage
+    dataroot_gt: /content/data/RDD_data/train/gt
+    dataroot_lq: /content/data/RDD_data/train/img
+    geometric_augs: true
+    filename_tmpl: '{}'
+    io_backend:
+      type: disk
+    use_shuffle: true
+    num_worker_per_gpu: 4
+    batch_size_per_gpu: 16
+    mini_batch_sizes:
+    - 16
+    - 10
+    - 8
+    - 4
+    iters:
+    - 10000
+    - 7000
+    - 7000
+    - 6000
+    gt_size: 256
+    gt_sizes:
+    - 128
+    - 160
+    - 192
+    - 256
+    dataset_enlarge_ratio: 1
+    prefetch_mode: null
+  val:
+    name: RDD_Val
+    type: Dataset_PairedImage
+    dataroot_gt: /content/data/RDD_data/val/gt
+    dataroot_lq: /content/data/RDD_data/val/img
+    io_backend:
+      type: disk
+network_g:
+  type: DocShadowNetV2
+  inp_channels: 3
+  out_channels: 3
+  dim: 48
+  num_blocks:
+  - 4
+  - 6
+  - 6
+  - 8
+  num_refinement_blocks: 4
+  heads:
+  - 1
+  - 2
+  - 4
+  - 8
+  ffn_expansion_factor: 2.66
+  bias: false
+  LayerNorm_type: WithBias
+  dual_pixel_task: false
+  down_mode: fp
+  up_mode: freqavg
+  use_hf: false
+  reduce_top: false
+  out_mode: add
+path:
+  pretrain_network_g: null
+  strict_load_g: true
+  resume_state: null
+train:
+  total_iter: 30000
+  warmup_iter: -1
+  use_grad_clip: true
+  scheduler:
+    type: CosineAnnealingRestartCyclicLR
+    periods:
+    - 10000
+    - 20000
+    restart_weights:
+    - 1
+    - 1
+    eta_mins:
+    - 0.0003
+    - 1.0e-06
+  mixing_augs:
+    mixup: false
+    mixup_beta: 1.2
+    use_identity: true
+  optim_g:
+    type: AdamW
+    lr: 0.0003
+    weight_decay: 0.0001
+    betas:
+    - 0.9
+    - 0.999
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1
+    reduction: mean
+  fft_opt:
+    type: FFTLoss
+    loss_weight: 0.1
+    reduction: mean
+val:
+  window_size: 8
+  val_freq: 2500
+  save_img: false
+  rgb2bgr: true
+  use_image: true
+  max_minibatch: 8
+  metrics:
+    psnr:
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
+    rmse:
+      type: calculate_rmse
+      crop_border: 0
+      test_y_channel: false
+logger:
+  print_freq: 500
+  save_checkpoint_freq: 2500
+  use_tb_logger: false
+  wandb:
+    project: null
+    resume_id: null
+dist_params:
+  backend: nccl
+  port: 29500

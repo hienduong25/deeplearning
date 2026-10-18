@@ -10,8 +10,8 @@ datasets:
   train:
     name: RDD_Train
     type: Dataset_PairedImage
-    dataroot_gt: ./RDD_data/train/gt
-    dataroot_lq: ./RDD_data/train/img
+    dataroot_gt: /content/data/RDD_data/train/gt
+    dataroot_lq: /content/data/RDD_data/train/img
     geometric_augs: true
 
     filename_tmpl: '{}'
@@ -35,8 +35,8 @@ datasets:
   val:
     name: RDD_Val
     type: Dataset_PairedImage
-    dataroot_gt: ./RDD_data/val/gt
-    dataroot_lq: ./RDD_data/val/img
+    dataroot_gt: /content/data/RDD_data/val/gt
+    dataroot_lq: /content/data/RDD_data/val/img
     io_backend:
       type: disk
 
@@ -53,10 +53,10 @@ network_g:
   bias: False
   LayerNorm_type: WithBias
   dual_pixel_task: False
-  down_mode: fp           # FrequencyPreservedPooling
-  up_mode: freqavg        # FreqAvgUp
-  use_hf: False           # No high-freq branch
-  reduce_top: False       # Level 1 decoder = 2*dim
+  down_mode: fp
+  up_mode: freqavg
+  use_hf: false
+  reduce_top: false
   out_mode: add
 
 # path
@@ -101,7 +101,7 @@ train:
 # validation settings
 val:
   window_size: 8
-  val_freq: !!float 2e3
+  val_freq: !!float 5e3
   save_img: false
   rgb2bgr: true
   use_image: true
@@ -124,8 +124,8 @@ val:
 # logging settings
 logger:
   print_freq: 500
-  save_checkpoint_freq: !!float 2e3
-  use_tb_logger: true
+  save_checkpoint_freq: !!float 5e3
+  use_tb_logger: false
   wandb:
     project: ~
     resume_id: ~
