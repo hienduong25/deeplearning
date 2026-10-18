@@ -27,16 +27,18 @@ from basicsr.utils import img2tensor, tensor2img
 from basicsr.metrics import calculate_psnr, calculate_ssim, calculate_rmse
 
 
-def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=None):
+def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=None, max_images=None, save_images=True):
     with open(opt_path, 'r') as f:
         opt = yaml.safe_load(f)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print("=" * 70)
     print(f"RUNNING EVALUATION ON [{device}]")
-    print(f"Config   : {opt_path}")
-    print(f"Weights  : {weights_path}")
-    print(f"Split    : {split}")
+    print(f"Config      : {opt_path}")
+    print(f"Weights     : {weights_path}")
+    print(f"Split       : {split}")
+    print(f"Max Images  : {max_images if max_images else 'All'}")
+    print(f"Save Images : {save_images}")
     print("=" * 70)
 
     # 1. Instantiate network
@@ -89,6 +91,8 @@ def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=No
     os.makedirs(images_dir, exist_ok=True)
 
     filenames = sorted(os.listdir(lq_dir))
+    if max_images is not None and max_images > 0:
+        filenames = filenames[:max_images]
     print(f"Total images to evaluate: {len(filenames)}")
 
     results = []
@@ -151,8 +155,9 @@ def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=No
             results.append((fname, psnr_val, ssim_val, rmse_val, elapsed))
             writer.writerow([fname, f"{psnr_val:.4f}", f"{ssim_val:.4f}", f"{rmse_val:.4f}", f"{elapsed:.4f}"])
 
-            # Save restored image
-            cv2.imwrite(os.path.join(images_dir, fname), out_img)
+            # Save restored image if requested
+            if save_images:
+                cv2.imwrite(os.path.join(images_dir, fname), out_img)
 
             if (idx + 1) % max(1, len(filenames) // 5) == 0 or idx == len(filenames) - 1:
                 print(f"  [{idx + 1}/{len(filenames)}] {fname:25s} | PSNR: {psnr_val:.2f} dB | SSIM: {ssim_val:.4f} | RMSE: {rmse_val:.2f} | Time: {elapsed:.3f}s")
@@ -167,7 +172,8 @@ def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=No
     print("EVALUATION COMPLETED SUCCESSFULLY")
     print("=" * 70)
     print(f"Results CSV : {csv_file}")
-    print(f"Images Dir  : {images_dir}")
+    if save_images:
+        print(f"Images Dir  : {images_dir}")
     print(f"Total Evaluated : {n_items} images")
     print(f"Average PSNR    : {avg_psnr:.4f} dB")
     print(f"Average SSIM    : {avg_ssim:.4f}")
@@ -189,8 +195,18 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--opt', type=str, required=True, help='Path to options yaml file')
     parser.add_argument('--weights', type=str, required=True, help='Path to trained weights .pth')
-    parser.add_argument('--split', type=str, default='val', choices=['val', 'test'], help='Dataset split')
+    parser.add_argument('--split', type=str, default='test', choices=['val', 'test'], help='Dataset split')
     parser.add_argument('--data_dir', type=str, default=None, help='Override dataset directory')
     parser.add_argument('--out', type=str, default=None, help='Output directory for metrics and images')
+    parser.add_argument('--max_images', type=int, default=None, help='Maximum number of images to evaluate (e.g. 300)')
+    parser.add_argument('--no_save_images', action='store_true', help='Do not save output images (faster)')
     args = parser.parse_args()
-    test_pipeline(args.opt, args.weights, args.split, args.data_dir, args.out)
+    test_pipeline(
+        opt_path=args.opt,
+        weights_path=args.weights,
+        split=args.split,
+        data_dir=args.data_dir,
+        out_dir=args.out,
+        max_images=args.max_images,
+        save_images=not args.no_save_images
+    )
