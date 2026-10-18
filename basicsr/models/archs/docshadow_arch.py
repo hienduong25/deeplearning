@@ -318,11 +318,34 @@ class DocShadowNet(nn.Module):
 ##########################################################################
 ## Frequency Modules for DocShadowNetV2
 
+def spectral_upsample2x(x):
+    """2x spatial upsampling via zero-padding in 2D frequency spectrum.
+    Preserves amplitude for constant images: an input of constant c yields constant c.
+    """
+    B, C, H, W = x.shape
+    x_f32 = x.float()
+    fft_x = torch.fft.rfft2(x_f32)  # (B, C, H, W // 2 + 1)
+
+    fft_up = torch.zeros((B, C, 2 * H, W + 1), dtype=fft_x.dtype, device=x.device)
+    fft_up[:, :, :H // 2, :W // 2 + 1] = fft_x[:, :, :H // 2, :]
+    fft_up[:, :, H // 2, :W // 2 + 1] = fft_x[:, :, H // 2, :] * 0.5
+    fft_up[:, :, 2 * H - H // 2, :W // 2 + 1] = fft_x[:, :, H // 2, :] * 0.5
+    fft_up[:, :, 2 * H - H // 2 + 1:, :W // 2 + 1] = fft_x[:, :, H // 2 + 1:, :]
+
+    # Scale by 4.0 to preserve amplitude
+    out = torch.fft.irfft2(fft_up * 4.0, s=(2 * H, 2 * W)).to(x.dtype)
+    return out
+
+
 class FrequencyPreservedPooling(nn.Module):
     """Frequency-Preserved Pooling from Level 3 to Level 4 (latent).
-    Applies anti-aliasing low-pass frequency filtering prior to downsampling,
-    preserving global illumination structure and matching Downsample's output shape.
-    Input: (B, C, H, W) -> Output: (B, C*2, H//2, W//2)
+    Maintains Conv 3x3 (n -> n/2) like Downsample.
+    Low path: FFT low-pass (|fx|, |fy| < 0.25), subsamples by 2 (stride 2) to H/2 x W/2,
+              repeats 4 times along channels -> (B, 2*n, H//2, W//2).
+    High path: x_conv - lowpass(x_conv) (full size) -> PixelUnshuffle(2) -> (B, 2*n, H//2, W//2).
+    Blending: (1 - alpha) * low + alpha * high, alpha initialized to 0.3.
+    Output shape matches Downsample(n_feat): (B, 2*n, H//2, W//2).
+    Parameters: exactly 1 more than Downsample (alpha parameter).
     """
 
     def __init__(self, n_feat, cutoff=0.25):
@@ -330,47 +353,87 @@ class FrequencyPreservedPooling(nn.Module):
         self.cutoff = cutoff
         self.conv = nn.Conv2d(n_feat, n_feat // 2, kernel_size=3, stride=1, padding=1, bias=False)
         self.unshuffle = nn.PixelUnshuffle(2)
+        self.alpha = nn.Parameter(torch.tensor(0.3))
 
-    def forward(self, x):
+    def fft_lowpass(self, x):
         B, C, H, W = x.shape
         x_f32 = x.float()
         fft = torch.fft.rfft2(x_f32)
         freq_y = torch.fft.fftfreq(H, device=x.device)
         freq_x = torch.fft.rfftfreq(W, device=x.device)
-        dist = torch.sqrt(freq_y.unsqueeze(1) ** 2 + freq_x.unsqueeze(0) ** 2)
-        mask = (dist <= self.cutoff).float().unsqueeze(0).unsqueeze(0)
-        mask[:, :, 0, 0] = 1.0  # Preserve DC component
+        mask_y = (torch.abs(freq_y) < self.cutoff).unsqueeze(1)
+        mask_x = (torch.abs(freq_x) < self.cutoff).unsqueeze(0)
+        mask = (mask_y & mask_x).float().unsqueeze(0).unsqueeze(0)
+        return torch.fft.irfft2(fft * mask, s=(H, W)).to(x.dtype)
 
-        x_lp = torch.fft.irfft2(fft * mask, s=(H, W)).to(x.dtype)
-        out = self.conv(x_lp)
-        out = self.unshuffle(out)
+    def forward(self, x):
+        x_conv = self.conv(x)  # (B, n // 2, H, W)
+        x_low_full = self.fft_lowpass(x_conv)
+        x_low_sub = x_low_full[:, :, ::2, ::2]  # (B, n // 2, H // 2, W // 2)
+        low = x_low_sub.repeat(1, 4, 1, 1)      # (B, 2 * n, H // 2, W // 2)
+
+        x_high_full = x_conv - x_low_full
+        high = self.unshuffle(x_high_full)      # (B, 2 * n, H // 2, W // 2)
+
+        out = (1.0 - self.alpha) * low + self.alpha * high
         return out
 
 
 class FreqAvgUp(nn.Module):
     """Frequency Average Upsampling from Level 4 to Level 3.
-    Maps (B, C, H, W) -> (B, C//2, 2*H, 2*W).
-    Guaranteed: on a constant image c, the output is identically c.
-    Output shape matches Upsample(n_feat).
+    Maintains Conv 3x3 (n -> 2n) like Upsample.
+    Groups 4 consecutive channels of x_conv.
+    Low path: mean of each group -> 2x upsampling by spectral zero-padding (preserves constant c).
+    High path: x_conv - group mean -> PixelShuffle(2).
+    Blending: (1 - beta) * low + beta * high, beta initialized to 0.3.
+    Output shape matches Upsample(n_feat): (B, n // 2, 2*H, 2*W).
+    Parameters: exactly 1 more than Upsample (beta parameter).
     """
 
     def __init__(self, n_feat, cutoff=0.25):
         super(FreqAvgUp, self).__init__()
         self.n_feat = n_feat
-        self.out_channels = n_feat // 2
         self.cutoff = cutoff
+        self.conv = nn.Conv2d(n_feat, n_feat * 2, kernel_size=3, stride=1, padding=1, bias=False)
+        self.shuffle = nn.PixelShuffle(2)
+        self.beta = nn.Parameter(torch.tensor(0.3))
+
+    def spectral_upsample(self, x):
+        return spectral_upsample2x(x)
 
     def forward(self, x):
         B, C, H, W = x.shape
         assert C == self.n_feat, f"Expected {self.n_feat} channels, got {C}"
+        x_conv = self.conv(x)  # (B, 2 * n_feat, H, W)
 
-        # 1. Channel reduction C -> C // 2 via pairwise averaging (preserves constant c)
+        C_conv = 2 * self.n_feat
+        C_out = C_conv // 4   # n_feat // 2
+        x_grouped = x_conv.view(B, C_out, 4, H, W)
+
+        # Low path: group mean + spectral zero padding 2x
+        x_mean = x_grouped.mean(dim=2)  # (B, C_out, H, W)
+        low = self.spectral_upsample(x_mean)  # (B, C_out, 2*H, 2*W)
+
+        # High path: residual within group + PixelShuffle(2)
+        x_high = (x_grouped - x_mean.unsqueeze(2)).reshape(B, C_conv, H, W)
+        high = self.shuffle(x_high)  # (B, C_out, 2*H, 2*W)
+
+        out = (1.0 - self.beta) * low + self.beta * high
+        return out
+
+
+class FreqAvgUpLite(nn.Module):
+    """Lite parameter-free variant of FreqAvgUp (kept as separate variant)."""
+
+    def __init__(self, n_feat, cutoff=0.25):
+        super(FreqAvgUpLite, self).__init__()
+        self.n_feat = n_feat
+        self.cutoff = cutoff
+
+    def forward(self, x):
+        B, C, H, W = x.shape
         x_chan = 0.5 * (x[:, 0::2, :, :] + x[:, 1::2, :, :])
-
-        # 2. 2x spatial upsampling via bilinear interpolation (preserves constant c)
         x_up = F.interpolate(x_chan, scale_factor=2, mode='bilinear', align_corners=False)
-
-        # 3. Frequency low-pass filtering with DC gain = 1.0 (preserves constant c)
         H_up, W_up = x_up.shape[-2:]
         x_f32 = x_up.float()
         fft = torch.fft.rfft2(x_f32)
@@ -378,8 +441,7 @@ class FreqAvgUp(nn.Module):
         freq_x = torch.fft.rfftfreq(W_up, device=x.device)
         dist = torch.sqrt(freq_y.unsqueeze(1) ** 2 + freq_x.unsqueeze(0) ** 2)
         mask = (dist <= self.cutoff).float().unsqueeze(0).unsqueeze(0)
-        mask[:, :, 0, 0] = 1.0  # DC component untouched
-
+        mask[:, :, 0, 0] = 1.0
         out = torch.fft.irfft2(fft * mask, s=(H_up, W_up)).to(x.dtype)
         return out
 
@@ -523,9 +585,11 @@ class DocShadowNetV2(nn.Module):
             ) for _ in range(num_blocks[3])
         ])
 
-        # Upsample 4 -> 3: PixelShuffle or FreqAvgUp
+        # Upsample 4 -> 3: PixelShuffle, FreqAvgUp, or FreqAvgUpLite
         if self.up_mode == 'freqavg':
             self.up4_3 = FreqAvgUp(int(dim * 2**3), cutoff=cutoff)
+        elif self.up_mode == 'freqavg_lite':
+            self.up4_3 = FreqAvgUpLite(int(dim * 2**3), cutoff=cutoff)
         else:
             self.up4_3 = Upsample(int(dim * 2**3))
 

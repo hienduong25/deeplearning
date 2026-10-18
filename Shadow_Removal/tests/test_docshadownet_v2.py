@@ -8,19 +8,20 @@ from basicsr.models.archs.docshadow_arch import (
     DocShadowNetV2,
     FrequencyPreservedPooling,
     FreqAvgUp,
+    FreqAvgUpLite,
     HighFreqBranch
 )
 from basicsr.models.archs import define_network
 
 
 def test_freqavgup_constant():
-    print("=== Test 1: FreqAvgUp on constant image ===")
+    print("=== Test 1: FreqAvgUp spectral upsampling on constant image ===")
     test_values = [0.0, 1.0, 3.14159, -2.5, 255.0]
+    freq_up = FreqAvgUp(n_feat=384)
     for val in test_values:
-        # Input shape (B=2, C=384, H=16, W=16)
-        x = torch.full((2, 384, 16, 16), val, dtype=torch.float32)
-        freq_up = FreqAvgUp(n_feat=384)
-        out = freq_up(x)
+        # Input shape (B=2, C=192, H=16, W=16) for spectral upsample
+        x_low = torch.full((2, 192, 16, 16), val, dtype=torch.float32)
+        out = freq_up.spectral_upsample(x_low)
 
         assert out.shape == (2, 192, 32, 32), f"Expected (2, 192, 32, 32), got {out.shape}"
         max_diff = torch.max(torch.abs(out - val)).item()
@@ -30,32 +31,38 @@ def test_freqavgup_constant():
     print("FreqAvgUp constant preservation test PASSED!\n")
 
 
-def test_fp_and_freqavgup_shapes():
-    print("=== Test 2: Shape comparison of FP and FreqAvgUp with Downsample and Upsample ===")
+def test_fp_and_freqavgup_shapes_and_params():
+    print("=== Test 2: Shape & Parameter count of FP and FreqAvgUp vs Downsample and Upsample ===")
     dim = 48
+    # FP vs Downsample at level 3->4 (n_feat = dim * 4 = 192)
     x_down = torch.randn(2, dim * 4, 32, 32)
     down_orig = Downsample(dim * 4)
     down_fp = FrequencyPreservedPooling(dim * 4)
-
     out_down_orig = down_orig(x_down)
     out_down_fp = down_fp(x_down)
-    print(f"  Downsample original output shape : {out_down_orig.shape}")
-    print(f"  FrequencyPreservedPooling output : {out_down_fp.shape}")
-    assert out_down_orig.shape == out_down_fp.shape, (
-        f"Shape mismatch: {out_down_orig.shape} vs {out_down_fp.shape}")
+    p_orig_down = sum(p.numel() for p in down_orig.parameters())
+    p_fp_down = sum(p.numel() for p in down_fp.parameters())
+    print(f"  Downsample original output shape : {out_down_orig.shape} | Params: {p_orig_down:,}")
+    print(f"  FrequencyPreservedPooling output : {out_down_fp.shape} | Params: {p_fp_down:,}")
+    assert out_down_orig.shape == out_down_fp.shape
+    assert p_fp_down - p_orig_down == 1, (
+        f"Expected exactly +1 parameter (alpha), got {p_fp_down - p_orig_down}")
 
+    # FreqAvgUp vs Upsample at level 4->3 (n_feat = dim * 8 = 384)
     x_up = torch.randn(2, dim * 8, 16, 16)
     up_orig = Upsample(dim * 8)
     up_freq = FreqAvgUp(dim * 8)
-
     out_up_orig = up_orig(x_up)
     out_up_freq = up_freq(x_up)
-    print(f"  Upsample original output shape   : {out_up_orig.shape}")
-    print(f"  FreqAvgUp output shape           : {out_up_freq.shape}")
-    assert out_up_orig.shape == out_up_freq.shape, (
-        f"Shape mismatch: {out_up_orig.shape} vs {out_up_freq.shape}")
+    p_orig_up = sum(p.numel() for p in up_orig.parameters())
+    p_freq_up = sum(p.numel() for p in up_freq.parameters())
+    print(f"  Upsample original output shape   : {out_up_orig.shape} | Params: {p_orig_up:,}")
+    print(f"  FreqAvgUp output shape           : {out_up_freq.shape} | Params: {p_freq_up:,}")
+    assert out_up_orig.shape == out_up_freq.shape
+    assert p_freq_up - p_orig_up == 1, (
+        f"Expected exactly +1 parameter (beta), got {p_freq_up - p_orig_up}")
 
-    print("FP and FreqAvgUp shape comparison test PASSED!\n")
+    print("FP and FreqAvgUp shape & +1 param comparison test PASSED!\n")
 
 
 def test_params_and_output_identical_when_flags_off():
@@ -101,7 +108,20 @@ def test_params_and_output_identical_when_flags_off():
 
 
 def test_docshadownet_v2_ablation_matrix():
-    print("=== Test 4: DocShadowNetV2 Ablation Variants Forward & Backward ===")
+    print("=== Test 4: DocShadowNetV2 Ablation Table at dim=48 (Real Dimension) ===")
+    real_kwargs = dict(
+        inp_channels=3,
+        out_channels=3,
+        dim=48,
+        num_blocks=[4, 6, 6, 8],
+        num_refinement_blocks=4,
+        heads=[1, 2, 4, 8],
+        ffn_expansion_factor=2.66,
+        bias=False,
+        LayerNorm_type='WithBias',
+        dual_pixel_task=False,
+    )
+
     variants = [
         ("Baseline (all flags off)", dict(down_mode='pixel', up_mode='pixel', use_hf=False)),
         ("+FP only", dict(down_mode='fp', up_mode='pixel', use_hf=False)),
@@ -112,6 +132,12 @@ def test_docshadownet_v2_ablation_matrix():
         ("Full with reduce_top=True", dict(down_mode='fp', up_mode='freqavg', use_hf=True, reduce_top=True)),
     ]
 
+    for name, flags in variants:
+        net = DocShadowNetV2(**real_kwargs, **flags)
+        n_params = sum(p.numel() for p in net.parameters())
+        print(f"  [{name:30s}] Real Params (dim=48): {n_params:10,d}")
+
+    print("\nChecking Forward & Backward for all variants with dim=16:")
     for name, flags in variants:
         opt = {
             'type': 'DocShadowNetV2',
@@ -141,7 +167,7 @@ def test_docshadownet_v2_ablation_matrix():
 
 def main():
     test_freqavgup_constant()
-    test_fp_and_freqavgup_shapes()
+    test_fp_and_freqavgup_shapes_and_params()
     test_params_and_output_identical_when_flags_off()
     test_docshadownet_v2_ablation_matrix()
     print("=" * 60)
