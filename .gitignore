@@ -13,3 +13,4 @@ experiments/
 tb_logger/
 __pycache__/
 *.egg-info/
+.eggs/

@@ -46,9 +46,18 @@ def main():
         shutil.copy2(os.path.join(train_img, fname), os.path.join(smoke_train_img, fname))
         shutil.copy2(os.path.join(train_gt, fname), os.path.join(smoke_train_gt, fname))
 
+    from PIL import Image
+
     for fname in val_samples:
-        shutil.copy2(os.path.join(train_img, fname), os.path.join(smoke_val_img, fname))
-        shutil.copy2(os.path.join(train_gt, fname), os.path.join(smoke_val_gt, fname))
+        src_i = os.path.join(train_img, fname)
+        src_g = os.path.join(train_gt, fname)
+        dst_i = os.path.join(smoke_val_img, fname)
+        dst_g = os.path.join(smoke_val_gt, fname)
+
+        with Image.open(src_i) as im:
+            im.crop((0, 0, 128, 128)).save(dst_i)
+        with Image.open(src_g) as gm:
+            gm.crop((0, 0, 128, 128)).save(dst_g)
 
     print(f'Created smoke dataset: {len(train_samples)} train pairs, {len(val_samples)} val pairs')
     print(f'  Train: {smoke_train_img}')

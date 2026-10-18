@@ -1,0 +1,118 @@
+datasets:
+  train:
+    batch_size_per_gpu: 2
+    dataroot_gt: ./RDD_data/smoke/train/gt
+    dataroot_lq: ./RDD_data/smoke/train/img
+    dataset_enlarge_ratio: 1
+    filename_tmpl: '{}'
+    geometric_augs: false
+    gt_size: 64
+    gt_sizes:
+    - 64
+    io_backend:
+      type: disk
+    iters:
+    - 10
+    mini_batch_sizes:
+    - 2
+    name: Smoke_Train
+    num_worker_per_gpu: 0
+    prefetch_mode: null
+    type: Dataset_PairedImage
+    use_shuffle: true
+  val:
+    dataroot_gt: ./RDD_data/smoke/val/gt
+    dataroot_lq: ./RDD_data/smoke/val/img
+    io_backend:
+      type: disk
+    name: Smoke_Val
+    type: Dataset_PairedImage
+dist_params:
+  backend: nccl
+  port: 29500
+logger:
+  print_freq: 2
+  save_checkpoint_freq: 12
+  use_tb_logger: false
+  wandb:
+    project: null
+    resume_id: null
+manual_seed: 100
+model_type: ImageCleanModel
+name: smoke_baseline
+network_g:
+  LayerNorm_type: WithBias
+  bias: false
+  dim: 16
+  dual_pixel_task: false
+  ffn_expansion_factor: 2.0
+  heads:
+  - 1
+  - 1
+  - 1
+  - 1
+  inp_channels: 3
+  num_blocks:
+  - 1
+  - 1
+  - 1
+  - 1
+  num_refinement_blocks: 1
+  out_channels: 3
+  type: Restormer
+num_gpu: 0
+path:
+  pretrain_network_g: null
+  resume_state: ./experiments/smoke_baseline/training_states/5.state
+  strict_load_g: true
+scale: 1
+train:
+  mixing_augs:
+    mixup: false
+    mixup_beta: 1.2
+    use_identity: true
+  optim_g:
+    betas:
+    - 0.9
+    - 0.999
+    lr: 0.0003
+    type: AdamW
+    weight_decay: 0.0001
+  pixel_opt:
+    loss_weight: 1
+    reduction: mean
+    type: L1Loss
+  scheduler:
+    eta_mins:
+    - 0.0003
+    - 1.0e-06
+    periods:
+    - 5
+    - 5
+    restart_weights:
+    - 1
+    - 1
+    type: CosineAnnealingRestartCyclicLR
+  total_iter: 12
+  use_grad_clip: true
+  warmup_iter: -1
+val:
+  max_minibatch: 1
+  metrics:
+    psnr:
+      crop_border: 0
+      test_y_channel: false
+      type: calculate_psnr
+    rmse:
+      crop_border: 0
+      test_y_channel: false
+      type: calculate_rmse
+    ssim:
+      crop_border: 0
+      test_y_channel: false
+      type: calculate_ssim
+  rgb2bgr: true
+  save_img: false
+  use_image: true
+  val_freq: 12
+  window_size: 8
