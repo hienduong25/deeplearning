@@ -4,6 +4,7 @@
 *.tif
 *.jpg
 *.pth
+*.state
 *.mat
 *.npy
 .DS_Store
@@ -11,6 +12,7 @@
 RDD_data/
 experiments/
 tb_logger/
+results/
 __pycache__/
 *.egg-info/
 .eggs/
