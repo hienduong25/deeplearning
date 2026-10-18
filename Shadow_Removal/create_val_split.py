@@ -1,5 +1,5 @@
-"""Split ~200 pairs from RDD train into a val set (symlinks/copies).
-Does NOT modify the original train folder.
+"""Split ~200 pairs from RDD train into a val set by MOVING them.
+Ensures no overlap between train and val.
 
 Usage:
     python Shadow_Removal/create_val_split.py --data_dir ./RDD_data --n_val 200 --seed 42
@@ -26,33 +26,49 @@ def main():
     assert os.path.isdir(train_img), f'{train_img} not found'
     assert os.path.isdir(train_gt), f'{train_gt} not found'
 
-    # Get common filenames
+    # If val already exists and has files that are also in train, remove them from train
+    os.makedirs(val_img, exist_ok=True)
+    os.makedirs(val_gt, exist_ok=True)
+
+    val_existing = set(os.listdir(val_img))
+    if val_existing:
+        print(f"Detected existing val set with {len(val_existing)} images. Cleaning up any duplicates in train...")
+        for fname in val_existing:
+            dup_img = os.path.join(train_img, fname)
+            dup_gt = os.path.join(train_gt, fname)
+            if os.path.exists(dup_img):
+                os.remove(dup_img)
+            if os.path.exists(dup_gt):
+                os.remove(dup_gt)
+
+    # Get common filenames currently in train
     img_files = set(os.listdir(train_img))
     gt_files = set(os.listdir(train_gt))
     common = sorted(img_files & gt_files)
 
-    n_val = min(args.n_val, len(common))
-    random.seed(args.seed)
-    val_names = random.sample(common, n_val)
+    needed_val = args.n_val - len(os.listdir(val_img))
+    if needed_val > 0:
+        random.seed(args.seed)
+        val_names = random.sample(common, min(needed_val, len(common)))
 
-    os.makedirs(val_img, exist_ok=True)
-    os.makedirs(val_gt, exist_ok=True)
+        for fname in val_names:
+            src_img = os.path.join(train_img, fname)
+            src_gt = os.path.join(train_gt, fname)
+            dst_img = os.path.join(val_img, fname)
+            dst_gt = os.path.join(val_gt, fname)
 
-    for fname in val_names:
-        src_img = os.path.join(train_img, fname)
-        src_gt = os.path.join(train_gt, fname)
-        dst_img = os.path.join(val_img, fname)
-        dst_gt = os.path.join(val_gt, fname)
+            shutil.move(src_img, dst_img)
+            shutil.move(src_gt, dst_gt)
 
-        if not os.path.exists(dst_img):
-            shutil.copy2(src_img, dst_img)
-        if not os.path.exists(dst_gt):
-            shutil.copy2(src_gt, dst_gt)
+    final_train_img = set(os.listdir(train_img))
+    final_val_img = set(os.listdir(val_img))
+    overlap = final_train_img & final_val_img
 
-    print(f'Created val split: {n_val} pairs')
-    print(f'  val/img: {val_img}')
-    print(f'  val/gt:  {val_gt}')
-    print(f'  Seed: {args.seed}')
+    print(f"Val split ready:")
+    print(f"  val/img count  : {len(final_val_img)}")
+    print(f"  train/img count: {len(final_train_img)}")
+    print(f"  Overlap count  : {len(overlap)} (MUST be 0)")
+    assert len(overlap) == 0, f"Error: Train and Val overlap by {len(overlap)} files!"
 
 
 if __name__ == '__main__':
