@@ -82,9 +82,9 @@ version_info = ({})
 
 
 def get_version():
-    with open(version_file, 'r') as f:
-        exec(compile(f.read(), version_file, 'exec'))
-    return locals()['__version__']
+    with open('VERSION', 'r') as f:
+        short_ver = f.read().strip()
+    return short_ver
 
 
 def make_cuda_ext(name, module, sources, sources_cuda=None):
