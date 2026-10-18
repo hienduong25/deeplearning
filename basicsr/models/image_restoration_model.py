@@ -108,6 +108,14 @@ class ImageCleanModel(BaseModel):
         else:
             raise ValueError('pixel loss are None.')
 
+        # optional FFT loss (backward-compatible: absent key → no FFT loss)
+        self.cri_fft = None
+        if train_opt.get('fft_opt'):
+            fft_type = train_opt['fft_opt'].pop('type')
+            cri_fft_cls = getattr(loss_module, fft_type)
+            self.cri_fft = cri_fft_cls(**train_opt['fft_opt']).to(
+                self.device)
+
         # set up optimizers and schedulers
         self.setup_optimizers()
         self.setup_schedulers()
@@ -161,8 +169,17 @@ class ImageCleanModel(BaseModel):
             l_pix += self.cri_pix(pred, self.gt)
 
         loss_dict['l_pix'] = l_pix
+        l_total = l_pix
 
-        l_pix.backward()
+        # optional FFT loss
+        if self.cri_fft is not None:
+            l_fft = 0.
+            for pred in preds:
+                l_fft += self.cri_fft(pred, self.gt)
+            loss_dict['l_fft'] = l_fft
+            l_total = l_total + l_fft
+
+        l_total.backward()
         if self.opt['train']['use_grad_clip']:
             torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.01)
         self.optimizer_g.step()

@@ -1,0 +1,122 @@
+# Smoke test configuration for Restormer with FFT Loss
+name: Restormer_RDD_fft_smoke
+model_type: ImageCleanModel
+scale: 1
+num_gpu: 1
+manual_seed: 100
+
+datasets:
+  train:
+    name: RDD_Smoke_Train
+    type: Dataset_PairedImage
+    dataroot_gt: ./RDD_data/smoke/train/gt
+    dataroot_lq: ./RDD_data/smoke/train/img
+    geometric_augs: true
+
+    filename_tmpl: '{}'
+    io_backend:
+      type: disk
+
+    use_shuffle: true
+    num_worker_per_gpu: 2
+    batch_size_per_gpu: 2
+
+    mini_batch_sizes: [2]
+    iters: [200]
+    gt_size: 128
+    gt_sizes: [128]
+
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+
+  val:
+    name: RDD_Smoke_Val
+    type: Dataset_PairedImage
+    dataroot_gt: ./RDD_data/smoke/val/gt
+    dataroot_lq: ./RDD_data/smoke/val/img
+    io_backend:
+      type: disk
+
+network_g:
+  type: Restormer
+  inp_channels: 3
+  out_channels: 3
+  dim: 48
+  num_blocks: [4,6,6,8]
+  num_refinement_blocks: 4
+  heads: [1,2,4,8]
+  ffn_expansion_factor: 2.66
+  bias: False
+  LayerNorm_type: WithBias
+  dual_pixel_task: False
+
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: ~
+
+train:
+  total_iter: 200
+  warmup_iter: -1
+  use_grad_clip: true
+
+  scheduler:
+    type: CosineAnnealingRestartCyclicLR
+    periods: [100, 100]
+    restart_weights: [1, 1]
+    eta_mins: [0.0003, 0.000001]
+
+  mixing_augs:
+    mixup: false
+    mixup_beta: 1.2
+    use_identity: true
+
+  optim_g:
+    type: AdamW
+    lr: !!float 3e-4
+    weight_decay: !!float 1e-4
+    betas: [0.9, 0.999]
+
+  pixel_opt:
+    type: L1Loss
+    loss_weight: 1
+    reduction: mean
+
+  fft_opt:
+    type: FFTLoss
+    loss_weight: 0.1
+    reduction: mean
+
+val:
+  window_size: 8
+  val_freq: 50
+  save_img: false
+  rgb2bgr: true
+  use_image: true
+  max_minibatch: 2
+
+  metrics:
+    psnr:
+      type: calculate_psnr
+      crop_border: 0
+      test_y_channel: false
+    ssim:
+      type: calculate_ssim
+      crop_border: 0
+      test_y_channel: false
+    rmse:
+      type: calculate_rmse
+      crop_border: 0
+      test_y_channel: false
+
+logger:
+  print_freq: 10
+  save_checkpoint_freq: 100
+  use_tb_logger: false
+  wandb:
+    project: ~
+    resume_id: ~
+
+dist_params:
+  backend: nccl
+  port: 29500

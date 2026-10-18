@@ -120,3 +120,29 @@ class CharbonnierLoss(nn.Module):
         # loss = torch.sum(torch.sqrt(diff * diff + self.eps))
         loss = torch.mean(torch.sqrt((diff * diff) + (self.eps*self.eps)))
         return loss
+
+
+class FFTLoss(nn.Module):
+    """L1 loss between frequency spectra (real + imaginary) of predicted and
+    ground-truth images.  Useful for preserving high-frequency details such as
+    text edges in document shadow removal.
+
+    Args:
+        loss_weight (float): Multiplier applied to the raw L1-in-frequency
+            value.  Default: 0.1.
+        reduction (str): 'mean' | 'sum' | 'none'.  Default: 'mean'.
+    """
+
+    def __init__(self, loss_weight=0.1, reduction='mean'):
+        super(FFTLoss, self).__init__()
+        self.loss_weight = loss_weight
+        self.criterion = nn.L1Loss(reduction=reduction)
+
+    def forward(self, pred, target, **kwargs):
+        # Force float32 to avoid issues under AMP / autocast
+        pred_f32 = pred.float()
+        target_f32 = target.float()
+        pf = torch.view_as_real(torch.fft.rfft2(pred_f32))
+        tf = torch.view_as_real(torch.fft.rfft2(target_f32))
+        return self.loss_weight * self.criterion(pf, tf)
+

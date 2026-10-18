@@ -231,9 +231,19 @@ def paired_paths_from_folder(folders, keys, filename_tmpl):
 
     input_paths = list(scandir(input_folder))
     gt_paths = list(scandir(gt_folder))
-    assert len(input_paths) == len(gt_paths), (
-        f'{input_key} and {gt_key} datasets have different number of images: '
-        f'{len(input_paths)}, {len(gt_paths)}.')
+    if len(input_paths) != len(gt_paths):
+        # Graceful fallback: match by identical filename if present
+        common_names = sorted(list(set(input_paths) & set(gt_paths)))
+        if len(common_names) > 0:
+            paths = []
+            for name in common_names:
+                paths.append(
+                    dict([(f'{input_key}_path', osp.join(input_folder, name)),
+                          (f'{gt_key}_path', osp.join(gt_folder, name))]))
+            return paths
+        assert len(input_paths) == len(gt_paths), (
+            f'{input_key} and {gt_key} datasets have different number of images: '
+            f'{len(input_paths)}, {len(gt_paths)}.')
     paths = []
     for idx in range(len(gt_paths)):
         gt_path = gt_paths[idx]
