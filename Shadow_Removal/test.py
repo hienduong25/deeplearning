@@ -51,11 +51,20 @@ def test_pipeline(opt_path, weights_path, split='val', data_dir=None, out_dir=No
     assert os.path.exists(weights_path), f"Weights file not found: {weights_path}"
     checkpoint = torch.load(weights_path, map_location=device)
     if 'params' in checkpoint:
-        net.load_state_dict(checkpoint['params'], strict=True)
+        state_dict = checkpoint['params']
     elif 'params_ema' in checkpoint:
-        net.load_state_dict(checkpoint['params_ema'], strict=True)
+        state_dict = checkpoint['params_ema']
     else:
-        net.load_state_dict(checkpoint, strict=True)
+        state_dict = checkpoint
+
+    # Try strict loading first; fallback to non-strict for pretrained weights across tasks (e.g. bias diffs)
+    try:
+        net.load_state_dict(state_dict, strict=True)
+        print("Loaded weights with strict=True.")
+    except Exception as e:
+        print(f"[Notice] Strict loading notice: {e}")
+        incompatible = net.load_state_dict(state_dict, strict=False)
+        print(f"Loaded weights with strict=False (Missing keys: {len(incompatible.missing_keys)}, Unexpected: {len(incompatible.unexpected_keys)})")
 
     net.to(device)
     net.eval()
