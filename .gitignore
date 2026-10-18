@@ -1,0 +1,15 @@
+.ipynb_checkpoints/
+*.pyc
+*.png
+*.tif
+*.jpg
+*.pth
+*.mat
+*.npy
+.DS_Store
+*.zip
+RDD_data/
+experiments/
+tb_logger/
+__pycache__/
+*.egg-info/
